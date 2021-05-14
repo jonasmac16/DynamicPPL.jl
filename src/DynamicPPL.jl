@@ -108,7 +108,9 @@ function getspace end
 # Necessary forward declarations
 abstract type AbstractVarInfo <: AbstractModelTrace end
 abstract type AbstractContext end
+abstract type AbstractState end
 
+export AbstractState
 
 include("utils.jl")
 include("selector.jl")
