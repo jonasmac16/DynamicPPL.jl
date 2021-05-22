@@ -17,10 +17,20 @@ end
 Handle observed variables with a `context` associated with a sampler.
 
 Falls back to `tilde_observe(context.context, right, left, vname, vinds, vi)` ignoring
-the information about the sampler.
+the information about the sampler if the context `context.context` does not call any other
+context, as indicated by [`unwrap_childcontext`](@ref). Otherwise, calls
+`tilde_observe(c, right, left, vname, vinds, vi)` where `c` is a context in
+which the order of the sampling context and its child are swapped.
 """
 function tilde_observe(context::SamplingContext, right, left, vname, vinds, vi)
-    return tilde_observe(context.context, right, left, vname, vinds, vi)
+    c, reconstruct_context = unwrap_childcontext(context)
+    child_of_c, reconstruct_c = unwrap_childcontext(c)
+    fallback_context = if child_of_c !== nothing
+        reconstruct_c(reconstruct_context(child_of_c))
+    else
+        c
+    end
+    return tilde_observe(fallback_context, right, left, vname, vinds, vi)
 end
 
 """
@@ -37,10 +47,20 @@ tilde_observe(context::AbstractContext, right, left, vi)
 Handle observed constants with a `context` associated with a sampler.
 
 Falls back to `tilde_observe(context.context, right, left, vi)` ignoring
-the information about the sampler.
+the information about the sampler if the context `context.context` does not call any other
+context, as indicated by [`unwrap_childcontext`](@ref). Otherwise, calls
+`tilde_observe(c, right, left, vi)` where `c` is a context in
+which the order of the sampling context and its child are swapped.
 """
 function tilde_observe(context::SamplingContext, right, left, vi)
-    return tilde_observe(context.context, right, left, vi)
+    c, reconstruct_context = unwrap_childcontext(context)
+    child_of_c, reconstruct_c = unwrap_childcontext(c)
+    fallback_context = if child_of_c !== nothing
+        reconstruct_c(reconstruct_context(child_of_c))
+    else
+        c
+    end
+    return tilde_observe(fallback_context, right, left, vi)
 end
 
 # special leaf contexts
@@ -71,47 +91,15 @@ function tilde_observe(context::MiniBatchContext, right, left, vi)
     setlogp!(vi, currentlogp + logp)
     return logp
 end
-function tilde_observe(
-    context::SamplingContext{<:Any,<:MiniBatchContext}, right, left, vname, vinds, vi
-)
-    _context = SamplingContext(context.rng, context.sampler, context.context.context)
-    currentlogp = getlogp(vi)
-    logp = context.loglike_scalar * tilde_observe(_context, right, left, vname, vinds, vi)
-    setlogp!(vi, currentlogp + logp)
-    return logp
-end
-function tilde_observe(context::SamplingContext{<:Any,<:MiniBatchContext}, right, left, vi)
-    _context = SamplingContext(context.rng, context.sampler, context.context.context)
-    currentlogp = getlogp(vi)
-    logp = context.loglike_scalar * tilde_observe(_context, right, left, vi)
-    setlogp!(vi, currentlogp + logp)
-    return logp
-end
 
 # prefixes
 function tilde_observe(context::PrefixContext, right, left, vname, vinds, vi)
-    prefixcontext = context.context
     return tilde_observe(
-        prefixcontext, right, prefix(prefixcontext, left), vname, vinds, vi
+        context.context, right, left, prefix(context, vname), vinds, vi
     )
 end
 function tilde_observe(context::PrefixContext, right, left, vi)
-    prefixcontext = context.context
-    return tilde_observe(prefixcontext, right, prefix(prefixcontext, left), vi)
-end
-function tilde_observe(
-    context::SamplingContext{<:Any,<:PrefixContext}, right, left, vname, vinds, vi
-)
-    prefixcontext = context.context
-    _context = SamplingContext(context.rng, context.sampler, prefixcontext.context)
-    _left = prefix(prefixcontext, left)
-    return tilde_observe(_context, right, _left, vname, vinds, vi)
-end
-function tilde_observe(context::SamplingContext{<:Any,<:PrefixContext}, right, left, vi)
-    prefixcontext = context.context
-    _context = SamplingContext(context.rng, context.sampler, prefixcontext.context)
-    _left = prefix(prefixcontext, left)
-    return tilde_observe(_context, right, _left, vi)
+    return tilde_observe(context.context, right, left, vi)
 end
 
 # default fallback (used e.g. by `SampleFromPrior` and `SampleUniform`)

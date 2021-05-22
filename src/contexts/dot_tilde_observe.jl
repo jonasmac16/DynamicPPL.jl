@@ -73,42 +73,13 @@ function dot_tilde_observe(context::MiniBatchContext, right, left, vi)
     setlogp!(vi, currentlogp + logp)
     return logp
 end
-function dot_tilde_observe(
-    context::SamplingContext{<:Any,<:MiniBatchContext}, right, left, vname, vinds, vi
-)
-    _context = SamplingContext(context.rng, context.sampler, context.context.context)
-    currentlogp = getlogp(vi)
-    logp =
-        context.loglike_scalar * dot_tilde_observe(_context, right, left, vname, vinds, vi)
-    setlogp!(vi, currentlogp + logp)
-    return logp
-end
-function dot_tilde_observe(
-    context::SamplingContext{<:Any,<:MiniBatchContext}, right, left, vi
-)
-    _context = SamplingContext(context.rng, context.sampler, context.context.context)
-    currentlogp = getlogp(vi)
-    logp = context.loglike_scalar * dot_tilde_observe(_context, right, left, vi)
-    setlogp!(vi, currentlogp + logp)
-    return logp
-end
 
 # prefixes
 function dot_tilde_observe(context::PrefixContext, right, left, vname, vinds, vi)
-    return dot_tilde_observe(context.context, right, left, vname, vinds, vi)
+    return dot_tilde_observe(context.context, right, left, prefix(context, vname), vinds, vi)
 end
 function dot_tilde_observe(context::PrefixContext, right, left, vi)
     return dot_tilde_observe(context.context, right, left, vi)
-end
-function dot_tilde_observe(
-    context::SamplingContext{<:Any,<:PrefixContext}, right, left, vname, vinds, vi
-)
-    _context = SamplingContext(context.rng, context.sampler, context.context.context)
-    return dot_tilde_observe(_context, right, left, vname, vinds, vi)
-end
-function dot_tilde_observe(context::SamplingContext{<:Any,<:PrefixContext}, right, left, vi)
-    _context = SamplingContext(context.rng, context.sampler, context.context.context)
-    return dot_tilde_observe(_context, right, left, vi)
 end
 
 # fallbacks

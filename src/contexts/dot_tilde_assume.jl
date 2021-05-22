@@ -17,11 +17,18 @@ Falls back to
 ```julia
 dot_tilde_assume(context.rng, context.context, context.sampler, right, left, vn, inds, vi)
 ```
+if the context `context.context` does not call any other context, as indicated by
+[`unwrap_childcontext`](@ref). Otherwise, calls `dot_tilde_assume(c, right, left, vn, inds, vi)`
+where `c` is a context in which the order of the sampling context and its child are swapped.
 """
 function dot_tilde_assume(context::SamplingContext, right, left, vn, inds, vi)
-    return dot_tilde_assume(
-        context.rng, context.context, context.sampler, right, left, vn, inds, vi
-    )
+    c, reconstruct_context = unwrap_childcontext(context)
+    child_of_c, reconstruct_c = unwrap_childcontext(c)
+    return if child_of_c === nothing
+        dot_tilde_assume(context.rng, c, context.sampler, right, left, vn, inds, vi)
+    else
+        dot_tilde_assume(reconstruct_c(reconstruct_context(child_of_c)), right, left, vn, inds, vi)
+    end
 end
 
 # leaf contexts
@@ -132,22 +139,10 @@ end
 function dot_tilde_assume(context::MiniBatchContext, right, left, vn, inds, vi)
     return dot_tilde_assume(context.context, right, left, vn, inds, vi)
 end
-function dot_tilde_assume(
-    rng::Random.AbstractRNG, context::MiniBatchContext, sampler, right, left, vn, inds, vi
-)
-    return dot_tilde_assume(rng, context.context, sampler, right, left, vn, inds, vi)
-end
 
 # prefixes
 function dot_tilde_assume(context::PrefixContext, right, left, vn, inds, vi)
     return dot_tilde_assume(context.context, right, prefix.(Ref(context), vn), inds, vi)
-end
-function dot_tilde_assume(
-    rng::Random.AbstractRNG, context::PrefixContext, sampler, right, left, vn, inds, vi
-)
-    return dot_tilde_assume(
-        rng, context.context, sampler, right, left, prefix.(Ref(context), vn), inds, vi
-    )
 end
 
 # Ambiguity error when not sure to use Distributions convention or Julia broadcasting semantics

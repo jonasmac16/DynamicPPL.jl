@@ -20,9 +20,18 @@ Falls back to
 ```julia
 tilde_assume(context.rng, context.context, context.sampler, right, vn, inds, vi)
 ```
+if the context `context.context` does not call any other context, as indicated by
+[`unwrap_childcontext`](@ref). Otherwise, calls `tilde_assume(c, right, vn, inds, vi)`
+where `c` is a context in which the order of the sampling context and its child are swapped.
 """
 function tilde_assume(context::SamplingContext, right, vn, inds, vi)
-    return tilde_assume(context.rng, context.context, context.sampler, right, vn, inds, vi)
+    c, reconstruct_context = unwrap_childcontext(context)
+    child_of_c, reconstruct_c = unwrap_childcontext(c)
+    return if child_of_c === nothing
+        tilde_assume(context.rng, c, context.sampler, right, vn, inds, vi)
+    else
+        tilde_assume(reconstruct_c(reconstruct_context(child_of_c)), right, vn, inds, vi)
+    end
 end
 
 # special leaf contexts
@@ -109,20 +118,10 @@ end
 function tilde_assume(context::MiniBatchContext, right, vn, inds, vi)
     return tilde_assume(context.context, right, vn, inds, vi)
 end
-function tilde_assume(
-    rng::Random.AbstractRNG, context::MiniBatchContext, sampler, right, vn, inds, vi
-)
-    return tilde_assume(rng, context.context, sampler, right, vn, inds, vi)
-end
 
 # prefixes
 function tilde_assume(context::PrefixContext, right, vn, inds, vi)
     return tilde_assume(context.context, right, prefix(context, vn), inds, vi)
-end
-function tilde_assume(
-    rng::Random.AbstractRNG, context::PrefixContext, sampler, right, vn, inds, vi
-)
-    return tilde_assume(rng, context.context, sampler, right, prefix(context, vn), inds, vi)
 end
 
 # fallback without sampler
