@@ -102,7 +102,6 @@ export AbstractVarInfo,
     @submodel
 
 # Reexport
-using Distributions: loglikelihood
 export loglikelihood
 
 # Used here and overloaded in Turing
@@ -112,13 +111,26 @@ function getspace end
 abstract type AbstractVarInfo <: AbstractModelTrace end
 abstract type AbstractContext end
 
+const AMBIGUITY_MSG =
+    "Ambiguous `LHS .~ RHS` or `@. LHS ~ RHS` syntax. The broadcasting " *
+    "can either be column-wise following the convention of Distributions.jl or " *
+    "element-wise following Julia's general broadcasting semantics. Please make sure " *
+    "that the element type of `LHS` is not a supertype of the support type of " *
+    "`AbstractVector` to eliminate ambiguity."
+
 include("utils.jl")
 include("selector.jl")
 include("model.jl")
 include("sampler.jl")
 include("varname.jl")
 include("distribution_wrappers.jl")
-include("contexts.jl")
+
+include("contexts/types.jl")
+include("contexts/tilde_assume.jl")
+include("contexts/tilde_observe.jl")
+include("contexts/dot_tilde_assume.jl")
+include("contexts/dot_tilde_observe.jl")
+
 include("varinfo.jl")
 include("threadsafe.jl")
 include("context_implementations.jl")

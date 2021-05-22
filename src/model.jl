@@ -86,14 +86,19 @@ function (model::Model)(
     rng::Random.AbstractRNG,
     varinfo::AbstractVarInfo=VarInfo(),
     sampler::AbstractSampler=SampleFromPrior(),
-    context::AbstractContext=DefaultContext(),
+    context::AbstractContext=JointContext(),
 )
+    return model(SamplingContext(rng, sampler, context), varinfo)
+end
+
+function (model::Model)(context::AbstractContext, varinfo::AbstractVarInfo=VarInfo())
     if Threads.nthreads() == 1
-        return evaluate_threadunsafe(rng, model, varinfo, sampler, context)
+        return evaluate_threadunsafe(context, model, varinfo)
     else
-        return evaluate_threadsafe(rng, model, varinfo, sampler, context)
+        return evaluate_threadsafe(context, model, varinfo)
     end
 end
+
 function (model::Model)(args...)
     return model(Random.GLOBAL_RNG, args...)
 end
@@ -109,7 +114,7 @@ function (model::Model)(rng::Random.AbstractRNG, context::AbstractContext)
 end
 
 """
-    evaluate_threadunsafe(rng, model, varinfo, sampler, context)
+    evaluate_threadunsafe(context, model, varinfo)
 
 Evaluate the `model` without wrapping `varinfo` inside a `ThreadSafeVarInfo`.
 
@@ -118,13 +123,13 @@ This method is not exposed and supposed to be used only internally in DynamicPPL
 
 See also: [`evaluate_threadsafe`](@ref)
 """
-function evaluate_threadunsafe(rng, model, varinfo, sampler, context)
+function evaluate_threadunsafe(context, model, varinfo)
     resetlogp!(varinfo)
-    return _evaluate(rng, model, varinfo, sampler, context)
+    return _evaluate(context, model, varinfo)
 end
 
 """
-    evaluate_threadsafe(rng, model, varinfo, sampler, context)
+    evaluate_threadsafe(context, model, varinfo)
 
 Evaluate the `model` with `varinfo` wrapped inside a `ThreadSafeVarInfo`.
 
@@ -134,24 +139,24 @@ This method is not exposed and supposed to be used only internally in DynamicPPL
 
 See also: [`evaluate_threadunsafe`](@ref)
 """
-function evaluate_threadsafe(rng, model, varinfo, sampler, context)
+function evaluate_threadsafe(context, model, varinfo)
     resetlogp!(varinfo)
     wrapper = ThreadSafeVarInfo(varinfo)
-    result = _evaluate(rng, model, wrapper, sampler, context)
+    result = _evaluate(context, model, varinfo)
     setlogp!(varinfo, getlogp(wrapper))
     return result
 end
 
 """
-    _evaluate(rng, model::Model, varinfo, sampler, context)
+    _evaluate(context, model::Model, varinfo)
 
-Evaluate the `model` with the arguments matching the given `sampler` and `varinfo` object.
+Evaluate the `model` with the arguments matching the given `context` and `varinfo` object.
 """
 @generated function _evaluate(
-    rng, model::Model{_F,argnames}, varinfo, sampler, context
+    context, model::Model{_F,argnames}, varinfo
 ) where {_F,argnames}
     unwrap_args = [:($matchingvalue(sampler, varinfo, model.args.$var)) for var in argnames]
-    return :(model.f(rng, model, varinfo, sampler, context, $(unwrap_args...)))
+    return :(model.f(context, model, varinfo, $(unwrap_args...)))
 end
 
 """
@@ -183,7 +188,7 @@ Return the log joint probability of variables `varinfo` for the probabilistic `m
 See [`logjoint`](@ref) and [`loglikelihood`](@ref).
 """
 function logjoint(model::Model, varinfo::AbstractVarInfo)
-    model(varinfo, SampleFromPrior(), DefaultContext())
+    model(JointContext(), varinfo)
     return getlogp(varinfo)
 end
 
@@ -195,7 +200,7 @@ Return the log prior probability of variables `varinfo` for the probabilistic `m
 See also [`logjoint`](@ref) and [`loglikelihood`](@ref).
 """
 function logprior(model::Model, varinfo::AbstractVarInfo)
-    model(varinfo, SampleFromPrior(), PriorContext())
+    model(PriorContext(), varinfo)
     return getlogp(varinfo)
 end
 
@@ -207,7 +212,7 @@ Return the log likelihood of variables `varinfo` for the probabilistic `model`.
 See also [`logjoint`](@ref) and [`logprior`](@ref).
 """
 function Distributions.loglikelihood(model::Model, varinfo::AbstractVarInfo)
-    model(varinfo, SampleFromPrior(), LikelihoodContext())
+    model(LikelihoodContext(), varinfo)
     return getlogp(varinfo)
 end
 

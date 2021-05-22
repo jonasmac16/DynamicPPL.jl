@@ -52,6 +52,49 @@ end
 check_tilde_rhs(x::Distribution) = x
 check_tilde_rhs(x::AbstractArray{<:Distribution}) = x
 
+"""
+    unwrap_right_vn(right, vn)
+
+Return the unwrapped distribution on the right-hand side and variable name on the left-hand
+side of a `~` expression such as `x ~ Normal()`.
+
+This is used mainly to unwrap `NamedDist` distributions.
+"""
+unwrap_right_vn(right, vn) = right, vn
+unwrap_right_vn(right::NamedDist, vn) = unwrap_right_vn(right.dist, right.name)
+
+"""
+    unwrap_right_left_vns(context, right, left, vns)
+
+Return the unwrapped distributions on the right-hand side and values and variable names on the
+left-hand side of a `.~` expression such as `x .~ Normal()`.
+
+This is used mainly to unwrap `NamedDist` distributions and adjust the indices of the
+variables.
+"""
+unwrap_right_left_vns(right, left, vns) = right, left, vns
+function unwrap_right_left_vns(right::NamedDist, left, vns)
+    return unwrap_right_left_vns(right.dist, left, right.name)
+end
+function unwrap_right_left_vns(
+    right::MultivariateDistribution, left::AbstractMatrix, vn::VarName
+)
+    vns = map(axes(left, 2)) do i
+        return VarName(vn, (vn.indexing..., Tuple(i)))
+    end
+    return unwrap_right_left_vns(right, left, vns)
+end
+function unwrap_right_left_vns(
+    right::Union{Distribution,AbstractArray{<:Distribution}},
+    left::AbstractArray,
+    vn::VarName,
+)
+    vns = map(CartesianIndices(left)) do i
+        return VarName(vn, (vn.indexing..., Tuple(i)))
+    end
+    return unwrap_right_left_vns(right, left, vns)
+end
+
 #################
 # Main Compiler #
 #################
@@ -243,11 +286,7 @@ function generate_tilde(left, right)
     if !(left isa Symbol || left isa Expr)
         return quote
             $(DynamicPPL.tilde_observe)(
-                __context__,
-                __sampler__,
-                $(DynamicPPL.check_tilde_rhs)($right),
-                $left,
-                __varinfo__,
+                __context__, $(DynamicPPL.check_tilde_rhs)($right), $left, __varinfo__
             )
         end
     end
@@ -261,18 +300,16 @@ function generate_tilde(left, right)
         $isassumption = $(DynamicPPL.isassumption(left))
         if $isassumption
             $left = $(DynamicPPL.tilde_assume)(
-                __rng__,
                 __context__,
-                __sampler__,
-                $(DynamicPPL.check_tilde_rhs)($right),
-                $vn,
+                $(DynamicPPL.unwrap_right_vn)(
+                    $(DynamicPPL.check_tilde_rhs)($right), $vn
+                )...,
                 $inds,
                 __varinfo__,
             )
         else
             $(DynamicPPL.tilde_observe)(
                 __context__,
-                __sampler__,
                 $(DynamicPPL.check_tilde_rhs)($right),
                 $left,
                 $vn,
@@ -293,11 +330,7 @@ function generate_dot_tilde(left, right)
     if !(left isa Symbol || left isa Expr)
         return quote
             $(DynamicPPL.dot_tilde_observe)(
-                __context__,
-                __sampler__,
-                $(DynamicPPL.check_tilde_rhs)($right),
-                $left,
-                __varinfo__,
+                __context__, $(DynamicPPL.check_tilde_rhs)($right), $left, __varinfo__
             )
         end
     end
@@ -311,19 +344,16 @@ function generate_dot_tilde(left, right)
         $isassumption = $(DynamicPPL.isassumption(left))
         if $isassumption
             $left .= $(DynamicPPL.dot_tilde_assume)(
-                __rng__,
                 __context__,
-                __sampler__,
-                $(DynamicPPL.check_tilde_rhs)($right),
-                $left,
-                $vn,
+                $(DynamicPPL.unwrap_right_left_vns)(
+                    $(DynamicPPL.check_tilde_rhs)($right), $left, $vn
+                )...,
                 $inds,
                 __varinfo__,
             )
         else
             $(DynamicPPL.dot_tilde_observe)(
                 __context__,
-                __sampler__,
                 $(DynamicPPL.check_tilde_rhs)($right),
                 $left,
                 $vn,
@@ -354,11 +384,9 @@ function build_output(modelinfo, linenumbernode)
     # Add the internal arguments to the user-specified arguments (positional + keywords).
     evaluatordef[:args] = vcat(
         [
-            :(__rng__::$(Random.AbstractRNG)),
+            :(__context__::$(DynamicPPL.AbstractContext)),
             :(__model__::$(DynamicPPL.Model)),
             :(__varinfo__::$(DynamicPPL.AbstractVarInfo)),
-            :(__sampler__::$(DynamicPPL.AbstractSampler)),
-            :(__context__::$(DynamicPPL.AbstractContext)),
         ],
         modelinfo[:allargs_exprs],
     )
@@ -367,7 +395,15 @@ function build_output(modelinfo, linenumbernode)
     evaluatordef[:kwargs] = []
 
     # Replace the user-provided function body with the version created by DynamicPPL.
-    evaluatordef[:body] = modelinfo[:body]
+    evaluatordef[:body] = quote
+        # in case someone accessed these
+        if __context__ isa $(DynamicPPL.SamplingContext)
+            __rng__ = __context__.rng
+            __sampler__ = __context__.sampler
+        end
+
+        $(modelinfo[:body])
+    end
 
     ## Build the model function.
 
