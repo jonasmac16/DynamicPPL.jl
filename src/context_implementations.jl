@@ -138,7 +138,7 @@ end
 function observe(
     spl::Union{SampleFromPrior,SampleFromUniform}, dist::Distribution, left, vi
 )
-    increment_num_produce!(vi)
+    vi isa VarInfo && increment_num_produce!(vi)
     return Distributions.loglikelihood(dist, left)
 end
 
@@ -396,9 +396,7 @@ function dot_observe(
     value::AbstractMatrix,
     vi,
 )
-    increment_num_produce!(vi)
-    @debug "dist = $dist"
-    @debug "value = $value"
+    vi isa VarInfo && increment_num_produce!(vi)
     return Distributions.loglikelihood(dist, value)
 end
 function dot_observe(
@@ -407,9 +405,7 @@ function dot_observe(
     value::AbstractArray,
     vi,
 )
-    increment_num_produce!(vi)
-    @debug "dists = $dists"
-    @debug "value = $value"
+    vi isa VarInfo && increment_num_produce!(vi)
     return Distributions.loglikelihood(dists, value)
 end
 function dot_observe(
@@ -418,9 +414,7 @@ function dot_observe(
     value::AbstractArray,
     vi,
 )
-    increment_num_produce!(vi)
-    @debug "dists = $dists"
-    @debug "value = $value"
+    vi isa VarInfo && increment_num_produce!(vi)
     return sum(Distributions.loglikelihood.(dists, value))
 end
 function dot_observe(spl::Sampler, ::Any, ::Any, ::Any)

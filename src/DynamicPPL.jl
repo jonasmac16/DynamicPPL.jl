@@ -128,5 +128,6 @@ include("prob_macro.jl")
 include("compat/ad.jl")
 include("loglikelihoods.jl")
 include("submodel_macro.jl")
+include("simple_varinfo.jl")
 
 end # module
