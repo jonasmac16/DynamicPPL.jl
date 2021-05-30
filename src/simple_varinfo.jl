@@ -34,6 +34,9 @@ getindex(vi::SimpleVarInfo, spl::SampleFromPrior) = vi.θ
 getindex(vi::SimpleVarInfo, spl::SampleFromUniform) = vi.θ
 getindex(vi::SimpleVarInfo, spl::Sampler) = vi.θ
 
+# TODO: This is kind of neat, but it's type-piracy; do we need it?
+AbstractPPL.getsym(vns::AbstractArray{<:VarName{sym}}) where {sym} = sym
+
 # Overload at highest level to just replace the value.
 function tilde_assume!(ctx, right, vn, inds, vi::SimpleVarInfo{<:NamedTuple})
     value = _getvalue(vi.θ, getsym(vn), inds)
@@ -41,8 +44,6 @@ function tilde_assume!(ctx, right, vn, inds, vi::SimpleVarInfo{<:NamedTuple})
     acclogp!(vi, logp)
     return value
 end
-
-AbstractPPL.getsym(vns::AbstractArray{<:VarName{sym}}) where {sym} = sym
 
 function dot_tilde_assume!(ctx, right, left, vn, inds, vi)
     value = _getvalue(vi.θ, getsym(vn), inds)
