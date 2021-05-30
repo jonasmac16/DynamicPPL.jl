@@ -1,3 +1,17 @@
+"""
+    SimpleVarInfo{NT,T} <: AbstractVarInfo
+
+A simple wrapper of the parameters with a `logp` field for
+accumulation of the logdensity.
+
+Currently only implemented for `NT <: NamedTuple`.
+
+## Notes
+The major differences between this and `TypedVarInfo` are:
+1. `SimpleVarInfo` does not require linearization.
+2. `SimpleVarInfo` can use more efficient bijectors.
+3. `SimpleVarInfo` only supports evaluation.
+"""
 struct SimpleVarInfo{NT,T} <: AbstractVarInfo
     θ::NT
     logp::Base.RefValue{T}
