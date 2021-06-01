@@ -18,86 +18,85 @@ _getindex(x, inds::Tuple) = _getindex(x[first(inds)...], Base.tail(inds))
 _getindex(x, inds::Tuple{}) = x
 
 # assume
-function tilde_assume(rng, ctx::DefaultContext, sampler, right, vn::VarName, _, vi)
-    return assume(rng, sampler, right, vn, vi)
+function tilde_assume(ctx::SamplingContext, right, vn, inds, vi)
+    return assume(ctx.rng, ctx.sampler, right, vn, inds, vi)
 end
-function tilde_assume(rng, ctx::PriorContext, sampler, right, vn::VarName, inds, vi)
+tilde_assume(ctx::EvaluationContext, right, vn, inds, vi) = assume(right, vn, inds, vi)
+function tilde_assume(ctx::PriorContext, right, vn, inds, vi)
     if ctx.vars !== nothing
         vi[vn] = vectorize(right, _getindex(getfield(ctx.vars, getsym(vn)), inds))
         settrans!(vi, false, vn)
     end
-    return assume(rng, sampler, right, vn, vi)
+    return tilde_assume(childcontext(ctx), right, vn, inds, vi)
 end
-function tilde_assume(rng, ctx::LikelihoodContext, sampler, right, vn::VarName, inds, vi)
+function tilde_assume(ctx::LikelihoodContext, right, vn, inds, vi)
     if ctx.vars isa NamedTuple && haskey(ctx.vars, getsym(vn))
         vi[vn] = vectorize(right, _getindex(getfield(ctx.vars, getsym(vn)), inds))
         settrans!(vi, false, vn)
     end
-    return assume(rng, sampler, NoDist(right), vn, vi)
+    return tilde_assume(childcontext(ctx), NoDist(right), vn, inds, vi)
 end
-function tilde_assume(rng, ctx::MiniBatchContext, sampler, right, left::VarName, inds, vi)
-    return tilde_assume(rng, ctx.ctx, sampler, right, left, inds, vi)
+function tilde_assume(ctx::MiniBatchContext, right, left, inds, vi)
+    return tilde_assume(childcontext(ctx), right, left, inds, vi)
 end
-function tilde_assume(rng, ctx::PrefixContext, sampler, right, vn::VarName, inds, vi)
-    return tilde_assume(rng, ctx.ctx, sampler, right, prefix(ctx, vn), inds, vi)
+function tilde_assume(ctx::PrefixContext, right, vn, inds, vi)
+    return tilde_assume(childcontext(ctx), right, prefix(ctx, vn), inds, vi)
 end
 
 """
-    tilde_assume!(rng, ctx, sampler, right, vn, inds, vi)
+    tilde_assume!(ctx, right, vn, inds, vi)
 
 Handle assumed variables, e.g., `x ~ Normal()` (where `x` does occur in the model inputs),
 accumulate the log probability, and return the sampled value.
 
-Falls back to `tilde_assume!(rng, ctx, sampler, right, vn, inds, vi)`.
+Falls back to `tilde_assume!(ctx, right, vn, inds, vi)`.
 """
-function tilde_assume!(rng, ctx, sampler, right, vn, inds, vi)
-    value, logp = tilde_assume(rng, ctx, sampler, right, vn, inds, vi)
+function tilde_assume!(ctx, right, vn, inds, vi)
+    value, logp = tilde_assume(ctx, right, vn, inds, vi)
     acclogp!(vi, logp)
     return value
 end
 
 # observe
-function tilde_observe(ctx::DefaultContext, sampler, right, left, vi)
-    return observe(sampler, right, left, vi)
+function tilde_observe(ctx::Union{SamplingContext,EvaluationContext}, right, left, vi)
+    return observe(right, left, vi)
 end
-function tilde_observe(ctx::PriorContext, sampler, right, left, vi)
-    return 0
+tilde_observe(ctx::PriorContext, right, left, vi) = 0
+function tilde_observe(ctx::LikelihoodContext, right, left, vi)
+    return tilde_observe(childcontext(ctx), right, left, vi)
 end
-function tilde_observe(ctx::LikelihoodContext, sampler, right, left, vi)
-    return observe(sampler, right, left, vi)
+function tilde_observe(ctx::MiniBatchContext, right, left, vi)
+    return ctx.loglike_scalar * tilde_observe(childcontext(ctx), right, left, vi)
 end
-function tilde_observe(ctx::MiniBatchContext, sampler, right, left, vi)
-    return ctx.loglike_scalar * tilde_observe(ctx.ctx, sampler, right, left, vi)
-end
-function tilde_observe(ctx::PrefixContext, sampler, right, left, vi)
-    return tilde_observe(ctx.ctx, sampler, right, left, vi)
+function tilde_observe(ctx::PrefixContext, right, left, vi)
+    return tilde_observe(childcontext(ctx), right, left, vi)
 end
 
 """
-    tilde_observe!(ctx, sampler, right, left, vname, vinds, vi)
+    tilde_observe!(ctx, right, left, vname, vinds, vi)
 
 Handle observed variables, e.g., `x ~ Normal()` (where `x` does occur in the model inputs),
 accumulate the log probability, and return the observed value.
 
-Falls back to `tilde_observe(ctx, sampler, right, left, vi)` ignoring the information about variable name
+Falls back to `tilde_observe(ctx, right, left, vi)` ignoring the information about variable name
 and indices; if needed, these can be accessed through this function, though.
 """
-function tilde_observe!(ctx, sampler, right, left, vname, vinds, vi)
-    logp = tilde_observe(ctx, sampler, right, left, vi)
+function tilde_observe!(ctx, right, left, vname, vinds, vi)
+    logp = tilde_observe(ctx, right, left, vi)
     acclogp!(vi, logp)
     return left
 end
 
 """
-    tilde_observe(ctx, sampler, right, left, vi)
+    tilde_observe(ctx, right, left, vi)
 
 Handle observed constants, e.g., `1.0 ~ Normal()`, accumulate the log probability, and
 return the observed value.
 
-Falls back to `tilde(ctx, sampler, right, left, vi)`.
+Falls back to `tilde(ctx, right, left, vi)`.
 """
-function tilde_observe!(ctx, sampler, right, left, vi)
-    logp = tilde_observe(ctx, sampler, right, left, vi)
+function tilde_observe!(ctx, right, left, vi)
+    logp = tilde_observe(ctx, right, left, vi)
     acclogp!(vi, logp)
     return left
 end
@@ -110,94 +109,101 @@ function observe(spl::Sampler, weight)
     return error("DynamicPPL.observe: unmanaged inference algorithm: $(typeof(spl))")
 end
 
-function assume(
-    rng, spl::Union{SampleFromPrior,SampleFromUniform}, dist::Distribution, vn::VarName, vi
-)
-    if haskey(vi, vn)
-        # Always overwrite the parameters with new ones for `SampleFromUniform`.
-        if spl isa SampleFromUniform || is_flagged(vi, vn, "del")
-            unset_flag!(vi, vn, "del")
-            r = init(rng, dist, spl)
-            vi[vn] = vectorize(dist, r)
-            settrans!(vi, false, vn)
-            setorder!(vi, vn, get_num_produce(vi))
-        else
-            r = vi[vn]
-        end
-    else
-        r = init(rng, dist, spl)
-        push!(vi, vn, r, dist, spl)
-        settrans!(vi, false, vn)
+# fallback without sampler
+function assume(dist::Distribution, vn::VarName, inds, vi)
+    if !haskey(vi, vn)
+        error("variable $vn does not exist")
     end
+    r = vi[vn]
+    return r, Bijectors.logpdf_with_trans(dist, vi[vn], istrans(vi, vn))
+end
+
+# SampleFromPrior and SampleFromUniform
+function assume(
+    rng::Random.AbstractRNG,
+    sampler::Union{SampleFromPrior,SampleFromUniform},
+    dist::Distribution,
+    vn::VarName,
+    inds,
+    vi,
+)
+    # Always overwrite the parameters with new ones.
+    r = init(rng, dist, sampler)
+    if haskey(vi, vn)
+        vi[vn] = vectorize(dist, r)
+        setorder!(vi, vn, get_num_produce(vi))
+    else
+        push!(vi, vn, r, dist, sampler)
+    end
+    settrans!(vi, false, vn)
     return r, Bijectors.logpdf_with_trans(dist, r, istrans(vi, vn))
 end
 
-function observe(
-    spl::Union{SampleFromPrior,SampleFromUniform}, dist::Distribution, value, vi
-)
+# default fallback (used e.g. by `SampleFromPrior` and `SampleUniform`)
+function observe(right::Distribution, left, vi)
     increment_num_produce!(vi)
-    return Distributions.loglikelihood(dist, value)
+    return Distributions.loglikelihood(right, left)
 end
 
 # .~ functions
 
 # assume
-function dot_tilde_assume(rng, ctx::DefaultContext, sampler, right, left, vns, _, vi)
-    return dot_assume(rng, sampler, right, vns, left, vi)
+function dot_tilde_assume(ctx::SamplingContext, right, left, vns, _, vi)
+    return dot_assume(ctx.rng, ctx.sampler, right, vns, left, vi)
 end
-function dot_tilde_assume(
-    rng,
-    ctx::LikelihoodContext,
-    sampler,
-    right,
-    left,
-    vns::AbstractArray{<:VarName{sym}},
-    inds,
-    vi,
-) where {sym}
+function dot_tilde_assume(ctx::EvaluationContext, right, left, vns, inds, vi)
+    return dot_assume(right, vns, left, inds, vi)
+end
+function dot_tilde_assume(ctx::LikelihoodContext, right, left, vns, inds, vi)
+    sym = getsym(vns)
     if ctx.vars isa NamedTuple && haskey(ctx.vars, sym)
         var = _getindex(getfield(ctx.vars, sym), inds)
         set_val!(vi, vns, right, var)
         settrans!.(Ref(vi), false, vns)
     end
-    return dot_assume(rng, sampler, NoDist.(right), vns, left, vi)
+    return dot_tilde_assume(childcontext(ctx), NoDist.(right), vns, left, vi)
 end
-function dot_tilde_assume(rng, ctx::MiniBatchContext, sampler, right, left, vns, inds, vi)
-    return dot_tilde_assume(rng, ctx.ctx, sampler, right, left, vns, inds, vi)
+function dot_tilde_assume(ctx::MiniBatchContext, right, left, vns, inds, vi)
+    return dot_tilde_assume(childcontext(ctx), right, left, vns, inds, vi)
 end
-function dot_tilde_assume(
-    rng,
-    ctx::PriorContext,
-    sampler,
-    right,
-    left,
-    vns::AbstractArray{<:VarName{sym}},
-    inds,
-    vi,
-) where {sym}
+function dot_tilde_assume(ctx::PriorContext, right, left, vns, inds, vi)
+    sym = getsym(vns)
     if ctx.vars !== nothing
         var = _getindex(getfield(ctx.vars, sym), inds)
         set_val!(vi, vns, right, var)
         settrans!.(Ref(vi), false, vns)
     end
-    return dot_assume(rng, sampler, right, vns, left, vi)
+    return dot_tilde_assume(childcontext(ctx), right, vns, left, vi)
 end
 
 """
-    dot_tilde_assume!(rng, ctx, sampler, right, left, vn, inds, vi)
+    dot_tilde_assume!(ctx, right, left, vn, inds, vi)
 
 Handle broadcasted assumed variables, e.g., `x .~ MvNormal()` (where `x` does not occur in the
 model inputs), accumulate the log probability, and return the sampled value.
 
-Falls back to `dot_tilde_assume(rng, ctx, sampler, right, left, vn, inds, vi)`.
+Falls back to `dot_tilde_assume(ctx, right, left, vn, inds, vi)`.
 """
-function dot_tilde_assume!(rng, ctx, sampler, right, left, vn, inds, vi)
-    value, logp = dot_tilde_assume(rng, ctx, sampler, right, left, vn, inds, vi)
+function dot_tilde_assume!(ctx, right, left, vn, inds, vi)
+    value, logp = dot_tilde_assume(ctx, right, left, vn, inds, vi)
     acclogp!(vi, logp)
     return value
 end
 
-# Ambiguity error when not sure to use Distributions convention or Julia broadcasting semantics
+# `dot_assume`
+function dot_assume(
+    dist::MultivariateDistribution,
+    var::AbstractMatrix,
+    vns::AbstractVector{<:VarName},
+    inds,
+    vi,
+)
+    @assert length(dist) == size(var, 1)
+    lp = sum(zip(vns, eachcol(var))) do vn, ri
+        return Bijectors.logpdf_with_trans(dist, ri, istrans(vi, vn))
+    end
+    return var, lp
+end
 function dot_assume(
     rng,
     spl::Union{SampleFromPrior,SampleFromUniform},
@@ -212,6 +218,19 @@ function dot_assume(
     var .= r
     return var, lp
 end
+
+function dot_assume(
+    dists::Union{Distribution,AbstractArray{<:Distribution}},
+    var::AbstractArray,
+    vns::AbstractArray{<:VarName},
+    inds,
+    vi,
+)
+    # Make sure `var` is not a matrix for multivariate distributions
+    lp = sum(Bijectors.logpdf_with_trans.(dists, var, istrans(vi, vns[1])))
+    return var, lp
+end
+
 function dot_assume(
     rng,
     spl::Union{SampleFromPrior,SampleFromUniform},
@@ -321,84 +340,62 @@ function set_val!(
 end
 
 # observe
-function dot_tilde_observe(ctx::DefaultContext, sampler, right, left, vi)
-    return dot_observe(sampler, right, left, vi)
+function dot_tilde_observe(ctx::Union{SamplingContext,EvaluationContext}, right, left, vi)
+    return dot_observe(right, left, vi)
 end
-function dot_tilde_observe(ctx::PriorContext, sampler, right, left, vi)
-    return 0
+dot_tilde_observe(ctx::PriorContext, right, left, vi) = 0
+function dot_tilde_observe(ctx::LikelihoodContext, right, left, vi)
+    return dot_observe(childcontext(ctx), right, left, vi)
 end
-function dot_tilde_observe(ctx::LikelihoodContext, sampler, right, left, vi)
-    return dot_observe(sampler, right, left, vi)
-end
-function dot_tilde_observe(ctx::MiniBatchContext, sampler, right, left, vi)
-    return ctx.loglike_scalar * dot_tilde_observe(ctx.ctx, sampler, right, left, vi)
+function dot_tilde_observe(ctx::MiniBatchContext, right, left, vi)
+    return ctx.loglike_scalar * dot_tilde_observe(childcontext(ctx), right, left, vi)
 end
 
 """
-    dot_tilde_observe!(ctx, sampler, right, left, vname, vinds, vi)
+    dot_tilde_observe!(ctx, right, left, vname, vinds, vi)
 
 Handle broadcasted observed values, e.g., `x .~ MvNormal()` (where `x` does occur the model inputs),
 accumulate the log probability, and return the observed value.
 
-Falls back to `dot_tilde_observe(ctx, sampler, right, left, vi)` ignoring the information about variable
+Falls back to `dot_tilde_observe(ctx, right, left, vi)` ignoring the information about variable
 name and indices; if needed, these can be accessed through this function, though.
 """
-function dot_tilde_observe!(ctx, sampler, right, left, vn, inds, vi)
-    logp = dot_tilde_observe(ctx, sampler, right, left, vi)
+function dot_tilde_observe!(ctx, right, left, vn, inds, vi)
+    logp = dot_tilde_observe(ctx, right, left, vi)
     acclogp!(vi, logp)
     return left
 end
 
 """
-    dot_tilde_observe!(ctx, sampler, right, left, vi)
+    dot_tilde_observe!(ctx, right, left, vi)
 
 Handle broadcasted observed constants, e.g., `[1.0] .~ MvNormal()`, accumulate the log
 probability, and return the observed value.
 
-Falls back to `dot_tilde_observe(ctx, sampler, right, left, vi)`.
+Falls back to `dot_tilde_observe(ctx, right, left, vi)`.
 """
-function dot_tilde_observe!(ctx, sampler, right, left, vi)
-    logp = dot_tilde_observe(ctx, sampler, right, left, vi)
+function dot_tilde_observe!(ctx, right, left, vi)
+    logp = dot_tilde_observe(ctx, right, left, vi)
     acclogp!(vi, logp)
     return left
 end
 
 # Ambiguity error when not sure to use Distributions convention or Julia broadcasting semantics
-function dot_observe(
-    spl::Union{SampleFromPrior,SampleFromUniform},
-    dist::MultivariateDistribution,
-    value::AbstractMatrix,
-    vi,
-)
+function dot_observe(dist::MultivariateDistribution, value::AbstractMatrix, vi)
     increment_num_produce!(vi)
     @debug "dist = $dist"
     @debug "value = $value"
     return Distributions.loglikelihood(dist, value)
 end
-function dot_observe(
-    spl::Union{SampleFromPrior,SampleFromUniform},
-    dists::Distribution,
-    value::AbstractArray,
-    vi,
-)
+function dot_observe(dists::Distribution, value::AbstractArray, vi)
     increment_num_produce!(vi)
     @debug "dists = $dists"
     @debug "value = $value"
     return Distributions.loglikelihood(dists, value)
 end
-function dot_observe(
-    spl::Union{SampleFromPrior,SampleFromUniform},
-    dists::AbstractArray{<:Distribution},
-    value::AbstractArray,
-    vi,
-)
+function dot_observe(dists::AbstractArray{<:Distribution}, value::AbstractArray, vi)
     increment_num_produce!(vi)
     @debug "dists = $dists"
     @debug "value = $value"
     return sum(Distributions.loglikelihood.(dists, value))
-end
-function dot_observe(spl::Sampler, ::Any, ::Any, ::Any)
-    return error(
-        "[DynamicPPL] $(alg_str(spl)) doesn't support vectorizing observe statement"
-    )
 end
