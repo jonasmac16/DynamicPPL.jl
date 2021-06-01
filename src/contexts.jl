@@ -1,9 +1,3 @@
-"""
-    struct DefaultContext <: AbstractContext end
-
-The `DefaultContext` is used by default to compute log the joint probability of the data 
-and parameters when running the model.
-"""
 abstract type PrimitiveContext <: AbstractContext end
 struct EvaluationContext{S<:AbstractSampler} <: PrimitiveContext
     # TODO: do we even need the sampler these days?
