@@ -435,10 +435,21 @@ function build_output(modelinfo, linenumbernode)
         )
     end
 
+    # Extract the names of the arguments.
+    allargs = vcat(modeldef[:args], modeldef[:kwargs])
+    argtypes = map(allargs) do arg
+        MacroTools.@match arg begin
+            (x_::T_) => T
+            (x_::T_ = default_) => T
+            x_ => :Any
+            (x_ = default_) => :Any
+        end
+    end
+
     return MacroTools.@q begin
         $evaluator = $(MacroTools.combinedef(evaluatordef))
         $(Base).@__doc__ $(MacroTools.combinedef(modeldef))
-        $(DynamicPPL).evaluator(::typeof($generator_name)) = typeof($evaluator)
+        $(DynamicPPL).evaluator(::typeof($generator_name), ::Type{<:Tuple{$(argtypes...)}}) = typeof($evaluator)
         $generator_name
     end
 end
