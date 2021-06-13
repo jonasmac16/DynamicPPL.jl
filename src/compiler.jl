@@ -420,23 +420,30 @@ function build_output(modelinfo, linenumbernode)
     # Update the function body of the user-specified model.
     # We use a name for the anonymous evaluator that does not conflict with other variables.
     modeldef = modelinfo[:modeldef]
+    generator_name = modeldef[:name]
     @gensym evaluator
     # We use `MacroTools.@q begin ... end` instead of regular `quote ... end` to ensure
     # that no new `LineNumberNode`s are added apart from the reference `linenumbernode`
     # to the call site
     modeldef[:body] = MacroTools.@q begin
         $(linenumbernode)
-        $evaluator = $(MacroTools.combinedef(evaluatordef))
         return $(DynamicPPL.Model)(
-            $(QuoteNode(modeldef[:name])),
+            $(QuoteNode(generator_name)),
             $evaluator,
             $allargs_namedtuple,
             $defaults_namedtuple,
         )
     end
 
-    return :($(Base).@__doc__ $(MacroTools.combinedef(modeldef)))
+    return MacroTools.@q begin
+        $evaluator = $(MacroTools.combinedef(evaluatordef))
+        $(Base).@__doc__ $(MacroTools.combinedef(modeldef))
+        $(DynamicPPL).evaluator(::typeof($generator_name)) = typeof($evaluator)
+        $generator_name
+    end
 end
+
+function evaluator end
 
 function warn_empty(body)
     if all(l -> isa(l, LineNumberNode), body.args)
