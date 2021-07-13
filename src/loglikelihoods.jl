@@ -92,14 +92,84 @@ end
 function dot_tilde_observe!(context::PointwiseLikelihoodContext, right, left, vn, inds, vi)
     # Need the `logp` value, so we cannot defer `acclogp!` to child-context, i.e.
     # we have to intercept the call to `dot_tilde_observe!`.
-    logp = dot_tilde_observe(context.context, right, left, vi)
-    acclogp!(vi, logp)
+    logps = tilde_observe.(Ref(context.context), right, left, Ref(vi))
+    acclogp!(vi, sum(logps))
 
-    # Track loglikelihood value.
-    push!(context, vn, logp)
+    for (vn_child, logp) in zip(concretize_varname(vn, left), logps)
+        # Track loglikelihood value.
+        push!(context, vn_child, logp)
+    end
 
     return left
 end
+
+function concretize_varname(vn::VarName{sym}, x::AbstractArray) where {sym}
+    concretized_indexing = concretize_indexing(x, vn)
+    indexing_iterators = map(concretized_indexing) do index
+        # An example of `index` is `(1:2, Colon(), 1)`.
+        Iterators.product(index...)
+    end
+
+    return map(VarName{sym}, Iterators.product(indexing_iterators...))
+end
+
+"""
+    concretize_indexing(x::AbstractArray, vn::VarName)
+
+
+"""
+function concretize_indexing(x::AbstractArray, vn::VarName)
+    indexing = AbstractPPL.getindexing(vn)
+    return concretize_indexing(x, indexing)
+end
+
+concretize_indexing(x, indexing) = concretize_indexing(x, first(indexing), indexing[2:end])
+function concretize_indexing(x, indexing::Tuple{})
+    
+end
+concretize_indexing(x::SubArray{<:Any, 0}, head, tail, result=()) = result
+
+function concretize_indexing(
+    x::AbstractArray{<:Any,N},
+    head::Tuple{Vararg{<:Any,N}},
+    tail,
+    result=()
+) where {N}
+    # First we replace `Colon()` with the corresponding range.
+    index = map(ntuple(i -> (i, head[i]), length(head))) do (i, idx)
+        if idx isa Colon
+            return 1:size(x, i)
+        else
+            return idx
+        end
+    end
+
+    if tail isa Tuple{}
+        return (result..., index)
+    else
+        return concretize_indexing(maybe_view(x, index...), first(tail), tail[2:end], (result..., index))
+    end
+end
+
+function replace_colon(x::AbstractArray{<:Any, N}, index::Tuple{Vararg{<:Any, N}}) where {N}
+    return map(ntuple(i -> (i, index[i]), N)) do (i, idx)
+        if idx isa Colon
+            return 1:size(x, i)
+        else
+            return idx
+        end
+    end
+end
+
+# Linear indices.
+replace_colon(x::AbstractArray, index::Tuple{Int64}) = Tuple(CartesianIndices(x)[index...])
+replace_colon(x::AbstractArray, index::Tuple{UnitRange{Int64}}) = Tuple.(CartesianIndices(x)[index...])
+function replace_colon(x::AbstractArray{<:Any, N}, index::Tuple{Colon}) where {N}
+    return Tuple.(CartesianIndices(x))
+end
+
+maybe_view(x) = x
+maybe_view(x::SubArray{<:Any, 0}) = first(x)
 
 """
     pointwise_loglikelihoods(model::Model, chain::Chains, keytype = String)
